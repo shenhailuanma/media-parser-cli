@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tomi/media-parser-cli/internal/analyzer"
+	"github.com/tomi/media-parser-cli/internal/detector"
 )
 
 type Format int
@@ -21,8 +22,9 @@ const (
 )
 
 type Options struct {
-	Format  Format
-	Verbose bool
+	Format       Format
+	Verbose      bool
+	ShowProblems bool
 }
 
 type Reporter struct {
@@ -273,4 +275,130 @@ func (r *Reporter) formatBitrate(bps int64) string {
 	} else {
 		return fmt.Sprintf("%.2f Mbps", float64(bps)/1000000)
 	}
+}
+
+// PrintDetailed prints detailed analysis including problems
+func (r *Reporter) PrintDetailed(analysis *analyzer.DetailedAnalysis) error {
+	switch r.options.Format {
+	case FormatJSON:
+		return r.printDetailedJSON(analysis)
+	case FormatYAML:
+		return r.printDetailedYAML(analysis)
+	case FormatText:
+		return r.printDetailedText(analysis)
+	default:
+		return r.printDetailedText(analysis)
+	}
+}
+
+func (r *Reporter) printDetailedJSON(analysis *analyzer.DetailedAnalysis) error {
+	encoder := json.NewEncoder(r.writer)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(analysis)
+}
+
+func (r *Reporter) printDetailedYAML(analysis *analyzer.DetailedAnalysis) error {
+	jsonData, err := json.Marshal(analysis)
+	if err != nil {
+		return err
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(jsonData, &data); err != nil {
+		return err
+	}
+
+	return r.printYAMLMap(data, 0)
+}
+
+func (r *Reporter) printDetailedText(analysis *analyzer.DetailedAnalysis) error {
+	// First print the basic media info
+	if err := r.printText(analysis.MediaInfo); err != nil {
+		return err
+	}
+
+	// Then print detected problems
+	if r.options.ShowProblems && len(analysis.Problems) > 0 {
+		fmt.Fprintln(r.writer, "\nDETECTED PROBLEMS:")
+		fmt.Fprintln(r.writer, strings.Repeat("-", 40))
+		r.printProblems(analysis.Problems)
+	}
+
+	return nil
+}
+
+func (r *Reporter) printProblems(problems []detector.Problem) {
+	// Group problems by severity
+	var errors, criticals, warnings, infos []detector.Problem
+
+	for _, p := range problems {
+		switch p.Severity {
+		case detector.SeverityError:
+			errors = append(errors, p)
+		case detector.SeverityCritical:
+			criticals = append(criticals, p)
+		case detector.SeverityWarning:
+			warnings = append(warnings, p)
+		case detector.SeverityInfo:
+			infos = append(infos, p)
+		}
+	}
+
+	// Print errors first
+	if len(errors) > 0 {
+		fmt.Fprintln(r.writer, "\n🔴 ERRORS:")
+		for _, p := range errors {
+			r.printProblem(p)
+		}
+	}
+
+	// Then critical issues
+	if len(criticals) > 0 {
+		fmt.Fprintln(r.writer, "\n🟠 CRITICAL:")
+		for _, p := range criticals {
+			r.printProblem(p)
+		}
+	}
+
+	// Then warnings
+	if len(warnings) > 0 {
+		fmt.Fprintln(r.writer, "\n🟡 WARNINGS:")
+		for _, p := range warnings {
+			r.printProblem(p)
+		}
+	}
+
+	// Finally info
+	if len(infos) > 0 && r.options.Verbose {
+		fmt.Fprintln(r.writer, "\n🔵 INFO:")
+		for _, p := range infos {
+			r.printProblem(p)
+		}
+	}
+
+	// Summary
+	fmt.Fprintln(r.writer, "\n" + strings.Repeat("-", 40))
+	fmt.Fprintf(r.writer, "Summary: %d errors, %d critical, %d warnings, %d info\n",
+		len(errors), len(criticals), len(warnings), len(infos))
+}
+
+func (r *Reporter) printProblem(p detector.Problem) {
+	w := tabwriter.NewWriter(r.writer, 0, 0, 2, ' ', 0)
+	
+	fmt.Fprintf(w, "  [%s]\t%s\n", p.Code, p.Message)
+	
+	if p.Details != "" {
+		fmt.Fprintf(w, "    Details:\t%s\n", p.Details)
+	}
+	
+	if p.Suggestion != "" {
+		fmt.Fprintf(w, "    ✨ Suggestion:\t%s\n", p.Suggestion)
+	}
+	
+	if p.Timestamp > 0 {
+		fmt.Fprintf(w, "    Timestamp:\t%.2fs\n", p.Timestamp)
+	}
+	
+	w.Flush()
+	fmt.Fprintln(r.writer)
 }

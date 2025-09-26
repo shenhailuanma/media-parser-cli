@@ -33,3 +33,6 @@ go.work.sum
 .claude/
 
 media-parser-cli
+main
+
+media-analysis/

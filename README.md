@@ -5,6 +5,11 @@ A command-line tool for analyzing video files and streams, providing detailed me
 ## Features
 
 - **Comprehensive Media Analysis**: Extract detailed information about video and audio streams
+- **Problem Detection**: Automatically detect common media issues and quality problems
+- **Packet/Frame Analysis**: Deep dive into packet and frame-level information
+- **Bitrate Analysis**: Visualize bitrate variations and detect spikes
+- **Frame Type Visualization**: Eyecard-style frame type analysis (I/P/B frames)
+- **Export Capabilities**: Save detailed analysis results to JSON files for further processing
 - **Multiple Input Support**: Analyze local files, HTTP/HTTPS streams, HLS, DASH, RTMP, and RTSP
 - **Flexible Output Formats**: JSON, YAML, or human-readable text reports
 - **Stream Information**: Codec details, resolution, bitrate, frame rate, and more
@@ -47,7 +52,7 @@ go build -o media-parser-cli
 ### Basic Usage
 
 ```bash
-# Analyze a local video file
+# Analyze a local video file with problem detection
 media-parser-cli parse video.mp4
 
 # Analyze an HLS stream
@@ -55,10 +60,14 @@ media-parser-cli parse https://example.com/stream.m3u8
 
 # Analyze an RTMP stream
 media-parser-cli parse rtmp://server/live/stream
+
+# Export detailed analysis to JSON files
+media-parser-cli export video.mp4 -d ./analysis_output
 ```
 
-### Command Options
+### Commands
 
+#### parse - Quick Media Analysis
 ```bash
 media-parser-cli parse [options] <input>
 
@@ -67,6 +76,7 @@ Options:
   --show-audio        Show audio stream information (default: true)
   --show-format       Show container format information (default: true)
   --show-streams      Show all stream details (default: false)
+  --show-problems     Show detected problems and warnings (default: true)
   --show-all          Show all available information
   -o, --output        Output format: json, yaml, text (default: text)
   -v, --verbose       Enable verbose output
@@ -74,24 +84,51 @@ Options:
   -h, --help          Show help information
 ```
 
+#### export - Detailed Analysis Export
+```bash
+media-parser-cli export [options] <input>
+
+Options:
+  -d, --dir           Directory to save analysis files (default: ./media-analysis)
+  --export-packets    Export packet information
+  --export-frames     Export frame information
+  --export-problems   Export detected problems (default: true)
+  --export-bitrate    Export bitrate timeline
+  --export-all        Export all available information
+  --max-packets       Maximum number of packets to export (default: 10000)
+  --max-frames        Maximum number of frames to export (default: 5000)
+  -v, --verbose       Enable verbose output
+  --timeout           Analysis timeout in seconds (default: 30)
+```
+
 ### Examples
+
+#### Basic analysis with problem detection
+```bash
+media-parser-cli parse video.mp4
+```
 
 #### Get JSON output for automation
 ```bash
 media-parser-cli parse video.mp4 -o json
 ```
 
-#### Show all stream information
+#### Export complete analysis
 ```bash
-media-parser-cli parse video.mp4 --show-all
+media-parser-cli export video.mp4 -d ./reports --export-all
 ```
 
-#### Quick analysis with 10-second timeout
+#### Export frame analysis (like eyecard)
 ```bash
-media-parser-cli parse https://stream.example.com/live.m3u8 --timeout 10
+media-parser-cli export video.mp4 -d ./debug --export-frames --max-frames 1000
 ```
 
-#### Verbose mode for debugging
+#### Disable problem detection for faster analysis
+```bash
+media-parser-cli parse video.mp4 --show-problems=false
+```
+
+#### Verbose mode with all information
 ```bash
 media-parser-cli parse video.mp4 -v --show-all
 ```
@@ -130,6 +167,20 @@ Codec:            aac (AAC (Advanced Audio Coding))
 Channels:         2
 Sample Rate:      48000 Hz
 Bitrate:          128.0 kbps
+
+DETECTED PROBLEMS:
+----------------------------------------
+
+🟡 WARNINGS:
+  [BITRATE_HIGH_VARIANCE]  High bitrate variation detected (CV: 0.35)
+    Details:              Average: 1.95 Mbps, StdDev: 0.68 Mbps
+    ✨ Suggestion:        Consider using constant bitrate encoding or adjusting rate control settings
+
+  [LARGE_KEYFRAME_INTERVAL]  Large keyframe interval: 10.50s
+    ✨ Suggestion:        For streaming, consider reducing keyframe interval to 2-4 seconds
+
+----------------------------------------
+Summary: 0 errors, 0 critical, 2 warnings, 0 info
 ```
 
 ### JSON Output
@@ -161,14 +212,38 @@ Bitrate:          128.0 kbps
 media-parser-cli/
 ├── cmd/                    # Command definitions
 │   ├── root.go            # Root command setup
-│   └── parse.go           # Parse command implementation
+│   ├── parse.go           # Parse command implementation
+│   └── export.go          # Export command for detailed analysis
 ├── internal/
 │   ├── analyzer/          # Media analysis logic
+│   ├── detector/          # Problem detection engine
 │   └── reporter/          # Output formatting
 ├── pkg/
-│   └── ffprobe/          # FFprobe wrapper
+│   └── ffprobe/          # FFprobe wrapper with packet/frame analysis
 └── main.go               # Application entry point
 ```
+
+### Problem Detection
+
+The tool automatically detects various media issues:
+
+- **Bitrate Issues**: High variance, sudden spikes
+- **Keyframe Problems**: Irregular intervals, missing keyframes
+- **Timestamp Issues**: Non-monotonic PTS/DTS, large gaps
+- **Compatibility Issues**: Codec/container compatibility warnings
+- **Packet Loss Indicators**: Potential packet loss detection
+
+### Export Files
+
+The export command creates structured JSON files:
+
+- `media_info.json`: Basic media information
+- `problems.json`: Detected issues with severity levels
+- `packets.json`: Packet-level data for detailed analysis
+- `frames.json`: Frame-level information
+- `frame_visualization.json`: Eyecard-style frame type visualization
+- `bitrate_timeline.json`: Bitrate over time for visualization
+- `summary.json`: Export summary and statistics
 
 ### Running Tests
 ```bash

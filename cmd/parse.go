@@ -11,12 +11,13 @@ import (
 )
 
 var (
-	showVideo   bool
-	showAudio   bool
-	showFormat  bool
-	showStreams bool
-	showAll     bool
-	timeout     int
+	showVideo    bool
+	showAudio    bool
+	showFormat   bool
+	showStreams  bool
+	showProblems bool
+	showAll      bool
+	timeout      int
 )
 
 var parseCmd = &cobra.Command{
@@ -46,6 +47,7 @@ func init() {
 	parseCmd.Flags().BoolVar(&showAudio, "show-audio", true, "Show audio stream information")
 	parseCmd.Flags().BoolVar(&showFormat, "show-format", true, "Show container format information")
 	parseCmd.Flags().BoolVar(&showStreams, "show-streams", false, "Show all stream details")
+	parseCmd.Flags().BoolVar(&showProblems, "show-problems", true, "Show detected problems and warnings")
 	parseCmd.Flags().BoolVar(&showAll, "show-all", false, "Show all available information")
 	parseCmd.Flags().IntVar(&timeout, "timeout", 30, "Analysis timeout in seconds")
 }
@@ -58,6 +60,7 @@ func runParse(cmd *cobra.Command, args []string) error {
 		showAudio = true
 		showFormat = true
 		showStreams = true
+		showProblems = true
 	}
 
 	if verbose {
@@ -65,28 +68,53 @@ func runParse(cmd *cobra.Command, args []string) error {
 	}
 
 	options := analyzer.Options{
-		Timeout:     timeout,
-		ShowVideo:   showVideo,
-		ShowAudio:   showAudio,
-		ShowFormat:  showFormat,
-		ShowStreams: showStreams,
-		Verbose:     verbose,
+		Timeout:        timeout,
+		ShowVideo:      showVideo,
+		ShowAudio:      showAudio,
+		ShowFormat:     showFormat,
+		ShowStreams:    showStreams,
+		Verbose:        verbose,
+		AnalyzePackets: showProblems, // Analyze packets/frames for problem detection
+		AnalyzeFrames:  showProblems,
+		MaxPackets:     1000, // Limit for quick analysis
+		MaxFrames:      500,
 	}
 
 	analyzer := analyzer.New(options)
-	result, err := analyzer.Analyze(input)
-	if err != nil {
-		return fmt.Errorf("failed to analyze media: %w", err)
-	}
+	
+	// Use detailed analysis if problems are requested
+	if showProblems {
+		detailedResult, err := analyzer.AnalyzeWithDetails(input)
+		if err != nil {
+			return fmt.Errorf("failed to analyze media: %w", err)
+		}
 
-	reporterOptions := reporter.Options{
-		Format:  getOutputFormat(),
-		Verbose: verbose,
-	}
+		reporterOptions := reporter.Options{
+			Format:       getOutputFormat(),
+			Verbose:      verbose,
+			ShowProblems: showProblems,
+		}
 
-	reporter := reporter.New(reporterOptions)
-	if err := reporter.Print(result); err != nil {
-		return fmt.Errorf("failed to generate report: %w", err)
+		reporter := reporter.New(reporterOptions)
+		if err := reporter.PrintDetailed(detailedResult); err != nil {
+			return fmt.Errorf("failed to generate report: %w", err)
+		}
+	} else {
+		// Use basic analysis without problem detection
+		result, err := analyzer.Analyze(input)
+		if err != nil {
+			return fmt.Errorf("failed to analyze media: %w", err)
+		}
+
+		reporterOptions := reporter.Options{
+			Format:  getOutputFormat(),
+			Verbose: verbose,
+		}
+
+		reporter := reporter.New(reporterOptions)
+		if err := reporter.Print(result); err != nil {
+			return fmt.Errorf("failed to generate report: %w", err)
+		}
 	}
 
 	return nil

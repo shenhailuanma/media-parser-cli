@@ -5,16 +5,21 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tomi/media-parser-cli/internal/detector"
 	"github.com/tomi/media-parser-cli/pkg/ffprobe"
 )
 
 type Options struct {
-	Timeout     int
-	ShowVideo   bool
-	ShowAudio   bool
-	ShowFormat  bool
-	ShowStreams bool
-	Verbose     bool
+	Timeout        int
+	ShowVideo      bool
+	ShowAudio      bool
+	ShowFormat     bool
+	ShowStreams    bool
+	Verbose        bool
+	AnalyzePackets bool
+	AnalyzeFrames  bool
+	MaxPackets     int
+	MaxFrames      int
 }
 
 type Analyzer struct {
@@ -191,4 +196,173 @@ func (a *Analyzer) extractStreamInfo(stream *ffprobe.Stream) StreamInfo {
 		CodecType: stream.CodecType,
 		Tags:      stream.Tags,
 	}
+}
+
+// DetailedAnalysis contains extended analysis results
+type DetailedAnalysis struct {
+	MediaInfo       *MediaInfo              `json:"media_info"`
+	Problems        []detector.Problem      `json:"problems,omitempty"`
+	Packets         []PacketData            `json:"packets,omitempty"`
+	Frames          []FrameData             `json:"frames,omitempty"`
+	BitrateTimeline []detector.BitratePoint `json:"bitrate_timeline,omitempty"`
+}
+
+// PacketData represents analyzed packet information
+type PacketData struct {
+	PTS         float64 `json:"pts"`
+	DTS         float64 `json:"dts"`
+	Size        int     `json:"size"`
+	StreamIndex int     `json:"stream_index"`
+	CodecType   string  `json:"codec_type"`
+	Duration    float64 `json:"duration,omitempty"`
+	Flags       string  `json:"flags,omitempty"`
+}
+
+// FrameData represents analyzed frame information
+type FrameData struct {
+	MediaType   string  `json:"media_type"`
+	StreamIndex int     `json:"stream_index"`
+	KeyFrame    bool    `json:"key_frame"`
+	PTS         float64 `json:"pts"`
+	DTS         float64 `json:"dts"`
+	Duration    float64 `json:"duration"`
+	Size        int     `json:"size"`
+	PictType    string  `json:"pict_type,omitempty"`
+	Width       int     `json:"width,omitempty"`
+	Height      int     `json:"height,omitempty"`
+	PixFmt      string  `json:"pix_fmt,omitempty"`
+}
+
+// AnalyzeWithDetails performs comprehensive media analysis including packets and frames
+func (a *Analyzer) AnalyzeWithDetails(input string) (*DetailedAnalysis, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(a.options.Timeout)*time.Second)
+	defer cancel()
+
+	// Get basic media info
+	mediaInfo, err := a.Analyze(input)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &DetailedAnalysis{
+		MediaInfo: mediaInfo,
+		Problems:  make([]detector.Problem, 0),
+	}
+
+	// Initialize detector
+	det := detector.New()
+
+	// Analyze packets if requested
+	if a.options.AnalyzePackets {
+		if a.options.Verbose {
+			fmt.Printf("Analyzing packets...\n")
+		}
+		packetsData, err := a.ffprobe.ProbePackets(ctx, input)
+		if err != nil {
+			if a.options.Verbose {
+				fmt.Printf("Warning: Failed to analyze packets: %v\n", err)
+			}
+		} else {
+			// Convert and limit packets
+			for i, packet := range packetsData.Packets {
+				if a.options.MaxPackets > 0 && i >= a.options.MaxPackets {
+					break
+				}
+				result.Packets = append(result.Packets, PacketData{
+					PTS:         packet.PTS,
+					DTS:         packet.DTS,
+					Size:        packet.Size,
+					StreamIndex: packet.StreamIndex,
+					CodecType:   packet.CodecType,
+					Duration:    packet.Duration,
+					Flags:       packet.Flags,
+				})
+			}
+
+			// Detect packet-based problems
+			if len(result.Packets) > 0 {
+				packetInfos := make([]detector.PacketInfo, 0, len(result.Packets))
+				for _, p := range result.Packets {
+					packetInfos = append(packetInfos, detector.PacketInfo{
+						PTS:         p.PTS,
+						DTS:         p.DTS,
+						Size:        p.Size,
+						StreamIndex: p.StreamIndex,
+						Duration:    p.Duration,
+					})
+				}
+				det.DetectBitrateVariations(packetInfos)
+				det.DetectPacketLoss(packetInfos)
+				
+				// Generate bitrate timeline
+				result.BitrateTimeline = detector.GenerateBitrateTimeline(packetInfos, 1.0)
+			}
+		}
+	}
+
+	// Analyze frames if requested
+	if a.options.AnalyzeFrames {
+		if a.options.Verbose {
+			fmt.Printf("Analyzing frames...\n")
+		}
+		framesData, err := a.ffprobe.ProbeFrames(ctx, input)
+		if err != nil {
+			if a.options.Verbose {
+				fmt.Printf("Warning: Failed to analyze frames: %v\n", err)
+			}
+		} else {
+			// Convert and limit frames
+			for i, frame := range framesData.Frames {
+				if a.options.MaxFrames > 0 && i >= a.options.MaxFrames {
+					break
+				}
+				result.Frames = append(result.Frames, FrameData{
+					MediaType:   frame.MediaType,
+					StreamIndex: frame.StreamIndex,
+					KeyFrame:    frame.KeyFrame,
+					PTS:         frame.PTS,
+					DTS:         frame.DTS,
+					Duration:    frame.Duration,
+					Size:        frame.Size,
+					PictType:    frame.PictType,
+					Width:       frame.Width,
+					Height:      frame.Height,
+					PixFmt:      frame.PixFmt,
+				})
+			}
+
+			// Detect frame-based problems
+			if len(result.Frames) > 0 {
+				frameInfos := make([]detector.FrameInfo, 0, len(result.Frames))
+				for _, f := range result.Frames {
+					frameInfos = append(frameInfos, detector.FrameInfo{
+						MediaType:   f.MediaType,
+						StreamIndex: f.StreamIndex,
+						KeyFrame:    f.KeyFrame,
+						PTS:         f.PTS,
+						DTS:         f.DTS,
+						Duration:    f.Duration,
+						Size:        f.Size,
+						PictType:    f.PictType,
+					})
+				}
+				det.DetectKeyframeIssues(frameInfos)
+				det.DetectTimestampIssues(frameInfos)
+			}
+		}
+	}
+
+	// Check compatibility issues
+	if mediaInfo.VideoStream != nil {
+		det.AnalyzeCompatibility(
+			mediaInfo.VideoStream.Codec,
+			mediaInfo.VideoStream.Profile,
+			mediaInfo.VideoStream.Level,
+			mediaInfo.Format.FormatName,
+		)
+	}
+
+	result.Problems = det.GetProblems()
+
+	return result, nil
 }

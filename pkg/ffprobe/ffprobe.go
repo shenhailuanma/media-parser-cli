@@ -142,6 +142,160 @@ func (f *FFProbe) Probe(ctx context.Context, input string) (*ProbeData, error) {
 	return &data, nil
 }
 
+// ProbePackets extracts packet information from media file
+func (f *FFProbe) ProbePackets(ctx context.Context, input string) (*PacketsData, error) {
+	args := []string{
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_packets",
+		input,
+	}
+
+	cmd := exec.CommandContext(ctx, f.binary, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("ffprobe packets failed: %s", string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("failed to run ffprobe for packets: %w", err)
+	}
+
+	var data PacketsData
+	if err := json.Unmarshal(output, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse packets output: %w", err)
+	}
+
+	// Convert string timestamps to float64
+	for i := range data.Packets {
+		packet := &data.Packets[i]
+		if packet.PTSTime != "" {
+			if pts, err := strconv.ParseFloat(packet.PTSTime, 64); err == nil {
+				packet.PTS = pts
+			}
+		}
+		if packet.DTSTime != "" {
+			if dts, err := strconv.ParseFloat(packet.DTSTime, 64); err == nil {
+				packet.DTS = dts
+			}
+		}
+		if packet.DurationTime != "" {
+			if duration, err := strconv.ParseFloat(packet.DurationTime, 64); err == nil {
+				packet.Duration = duration
+			}
+		}
+		if packet.SizeStr != "" {
+			if size, err := strconv.Atoi(packet.SizeStr); err == nil {
+				packet.Size = size
+			}
+		}
+	}
+
+	return &data, nil
+}
+
+// ProbeFrames extracts frame information from media file
+func (f *FFProbe) ProbeFrames(ctx context.Context, input string) (*FramesData, error) {
+	args := []string{
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_frames",
+		input,
+	}
+
+	cmd := exec.CommandContext(ctx, f.binary, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("ffprobe frames failed: %s", string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("failed to run ffprobe for frames: %w", err)
+	}
+
+	var data FramesData
+	if err := json.Unmarshal(output, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse frames output: %w", err)
+	}
+
+	// Convert string values to appropriate types
+	for i := range data.Frames {
+		frame := &data.Frames[i]
+		if frame.PTSTime != "" {
+			if pts, err := strconv.ParseFloat(frame.PTSTime, 64); err == nil {
+				frame.PTS = pts
+			}
+		}
+		if frame.DTSTime != "" {
+			if dts, err := strconv.ParseFloat(frame.DTSTime, 64); err == nil {
+				frame.DTS = dts
+			}
+		}
+		if frame.DurationTime != "" {
+			if duration, err := strconv.ParseFloat(frame.DurationTime, 64); err == nil {
+				frame.Duration = duration
+			}
+		}
+		if frame.PktSize != "" {
+			if size, err := strconv.Atoi(frame.PktSize); err == nil {
+				frame.Size = size
+			}
+		}
+		frame.KeyFrame = frame.KeyFrameInt == 1
+	}
+
+	return &data, nil
+}
+
+// PacketsData holds packet information
+type PacketsData struct {
+	Packets []Packet `json:"packets"`
+}
+
+// Packet represents a media packet
+type Packet struct {
+	CodecType    string  `json:"codec_type"`
+	StreamIndex  int     `json:"stream_index"`
+	PTS          float64 `json:"-"`
+	PTSTime      string  `json:"pts_time"`
+	DTS          float64 `json:"-"`
+	DTSTime      string  `json:"dts_time"`
+	Duration     float64 `json:"-"`
+	DurationTime string  `json:"duration_time"`
+	Size         int     `json:"-"`
+	SizeStr      string  `json:"size"`
+	Pos          string  `json:"pos"`
+	Flags        string  `json:"flags"`
+}
+
+// FramesData holds frame information
+type FramesData struct {
+	Frames []Frame `json:"frames"`
+}
+
+// Frame represents a media frame
+type Frame struct {
+	MediaType           string  `json:"media_type"`
+	StreamIndex         int     `json:"stream_index"`
+	KeyFrameInt         int     `json:"key_frame"`
+	KeyFrame            bool    `json:"-"`
+	PTS                 float64 `json:"-"`
+	PTSTime             string  `json:"pts_time"`
+	DTS                 float64 `json:"-"`
+	DTSTime             string  `json:"dts_time"`
+	Duration            float64 `json:"-"`
+	DurationTime        string  `json:"duration_time"`
+	Size                int     `json:"-"`
+	PktSize             string  `json:"pkt_size"`
+	Width               int     `json:"width,omitempty"`
+	Height              int     `json:"height,omitempty"`
+	PixFmt              string  `json:"pix_fmt,omitempty"`
+	PictType            string  `json:"pict_type,omitempty"`
+	CodedPictureNumber  int     `json:"coded_picture_number,omitempty"`
+	DisplayPictureNumber int    `json:"display_picture_number,omitempty"`
+	InterlacedFrame     int     `json:"interlaced_frame,omitempty"`
+	TopFieldFirst       int     `json:"top_field_first,omitempty"`
+	RepeatPict          int     `json:"repeat_pict,omitempty"`
+}
+
 func (f *FFProbe) CheckInstalled() error {
 	cmd := exec.Command(f.binary, "-version")
 	if err := cmd.Run(); err != nil {
